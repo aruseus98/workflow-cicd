@@ -17,21 +17,36 @@ services:
       #SSL let's encrypt, HTTPS
       - "--certificatesresolvers.myresolver.acme.httpchallenge=true"
       - "--certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.myresolver.acme.email=example@gmail.com" # Remplacez par votre email
+      - "--certificatesresolvers.myresolver.acme.email=furiousducks196@gmail.com" # Remplacez par votre email
       - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
-
     ports:
       - "80:80"
       - "443:443"
       - "8084:8084" # Pour les métriques de Prometheus
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.traefik.rule=Host(`domaine.name.com`)" #On associe un nom de domaine au service en question et traefik s'occupera de re router
+      - "traefik.http.routers.traefik.rule=Host(`domaine.name.com`)" #On associe un nom de domaine au service en question et traefik s'occupera de re router // Remplace domaine.name.com par le nom de domaine choisis
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.tls.certresolver=myresolver"
       - "traefik.http.routers.traefik.service=api@internal"
-      - "traefik.http.routers.traefik.middlewares=auth" # Ajout d'un middleware pour activer l'authentification
-      - "traefik.http.middlewares.auth.basicauth.users=[USER_A_MODIFIER]:[PASSWORD_A_MODIFIER]" # Ajout de l'authenfication via ID et MDP hashé les $ car docker interprète différement les $
+      - "traefik.http.routers.traefik.middlewares=auth,traefik-sec-headers@docker,security@docker,myreferrerpolicy@docker,mypermissionspolicy@docker" # Ajout d'un middleware pour activer l'authentification + entête sécurité
+      - "traefik.http.middlewares.auth.basicauth.users=fducks196:$$apr1$$gwHGhwYm$$FDd5rOVKGugz8S7a3Mn9o0" # Ajout de l'authenfication via ID et MDP hashé les $ car docker interprète différement les $
+      #Ajout entêtes de sécurité HSTS
+      - "traefik.http.middlewares.security.headers.stsSeconds=31536000" # 1 an
+      - "traefik.http.middlewares.security.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.security.headers.stsPreload=true"
+      #Ajout referrer policy
+      - "traefik.http.middlewares.myreferrerpolicy.headers.customResponseHeaders.Referrer-Policy=no-referrer"
+      #Ajout permissions policy
+      - "traefik.http.middlewares.mypermissionspolicy.headers.customResponseHeaders.Permissions-Policy=geolocation=(), microphone=()"
+      - "traefik.http.middlewares.traefik-sec-headers.headers.customResponseHeaders.X-Frame-Options=SAMEORIGIN"
+      - "traefik.http.middlewares.traefik-sec-headers.headers.customResponseHeaders.X-Content-Type-Options=nosniff"
+      #Ajout middleware de redirection HTTP à HTTPS
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      #Création routeur pour la redirection
+      - "traefik.http.routers.http-catchall.rule=HostRegexp(`{host:.+}`)"
+      - "traefik.http.routers.http-catchall.entrypoints=web"
+      - "traefik.http.routers.http-catchall.middlewares=redirect-to-https"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # Traefik doit accéder au socket Docker
       - ./letsencrypt:/letsencrypt #Stocker les certificats let's encrypt
@@ -55,16 +70,31 @@ services:
   grafana:
     image: grafana/grafana:latest
     restart: always
+    env_file:
+      - .env
     ports:
       - "3000:3000"
     networks:
       - my-network
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - grafanalogs:/var/log/grafana
+      - grafanaplugins:/var/lib/grafana/plugins
+    environment: # Configuration du service SMTP via gmail pour préparer les alertes par
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=smtp.gmail.com:587
+      - GF_SMTP_USER=${GRAFANA_SMTP_USER}
+      - GF_SMTP_PASSWORD=${GRAFANA_SMTP_PASSWORD}
+      - GF_SMTP_FROM_ADDRESS=${GRAFANA_SMTP_USER}
+      - GF_SMTP_FROM_NAME=Grafana
+      - GF_SMTP_STARTTLS_POLICY=Always
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(`domaine.name.com`)" # Vous pouvez ajuster le sous-domaine selon vos besoins.
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000" 
       - "traefik.http.routers.grafana.tls.certresolver=myresolver"
+      - "traefik.http.routers.grafana.middlewares=security@docker,myreferrerpolicy@docker,mypermissionspolicy@docker" # Ajout middleware entête de securité
 
   gitlab:
     image: gitlab/gitlab-ce:latest
@@ -86,6 +116,7 @@ services:
       - "traefik.http.services.gitlab.loadbalancer.server.port=80"  # Même si GitLab écoute sur le port 81 du host, à l'intérieur du conteneur, il écoute sur le port 80.
       - "traefik.http.routers.gitlab.entrypoints=websecure"
       - "traefik.http.routers.gitlab.tls.certresolver=myresolver"
+      - "traefik.http.routers.gitlab.middlewares=security@docker,myreferrerpolicy@docker,mypermissionspolicy@docker"
     volumes:
       - /home/debian/gitlab/config:/etc/gitlab
       - /home/debian/gitlab/logs:/var/log/gitlab
@@ -108,10 +139,11 @@ services:
     #  - 50000:50000
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.jenkins.rule=Host(`domaine.name.com`)" # Vous pouvez ajuster le sous-domaine selon vos besoins.
+      - "traefik.http.routers.jenkins.rule=Host(`domaine.name.com`)"
       - "traefik.http.services.jenkins.loadbalancer.server.port=8080"
       - "traefik.http.routers.jenkins.entrypoints=websecure"
       - "traefik.http.routers.jenkins.tls.certresolver=myresolver"
+      - "traefik.http.routers.jenkins.middlewares=security@docker,myreferrerpolicy@docker,mypermissionspolicy@docker" # Ajout middleware entête de securité
     volumes:
       - /home/debian/jenkins_home:/debian/jenkins_home
       - /home/debian/docker-compose.yml:/home/debian/docker-compose.yml
@@ -129,14 +161,15 @@ services:
     container_name: angular-dev
     build:
       context: ${WORKSPACE_PATH}/angular
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     ports:
       - 82:80  # Assurez-vous que le Dockerfile configure votre application Angular pour servir sur le port 80, sinon ajustez-le
     labels:
      - "traefik.enable=true"
      - "traefik.http.routers.angular-dev.rule=Host(`domaine.name.com`)" # Vous pouvez ajuster le sous-domaine selon vos besoins.
-     - "traefik.http.routers.angular-dev.entrypoints=web"
+     - "traefik.http.routers.angular-dev.entrypoints=websecure"
      - "traefik.http.services.angular-dev.loadbalancer.server.port=80" 
+     - "traefik.http.routers.angular-dev.tls.certresolver=myresolver"
     networks:
      - my-network
 
@@ -144,7 +177,7 @@ services:
     container_name: angular-preprod
     build:
       context: ${WORKSPACE_PATH}/preprod-angular
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.preprod
     ports:
       - 83:80  # Mappé sur le port 80 car il y a nginx dans le container préprod
     labels:
@@ -161,7 +194,7 @@ services:
     container_name: angular-prod
     build:
       context: ${WORKSPACE_PATH}/prod-angular
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.prod
     ports:
       - 84:80  # Mappé sur le port 80 car il y a nginx dans le container
     labels:
@@ -176,7 +209,7 @@ services:
   # Service API pour le déploiement
 
   api-dev:
-    container_name: TheTiptop_Api-dev
+    container_name: api-dev # The Tiptop api dev
     build:
       context: ${WORKSPACE_PATH}/the-tiptop-api-dev
       dockerfile: Dockerfile.dev
@@ -185,7 +218,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api-dev.rule=Host(`domaine.name.com`)" # Vous pouvez ajuster le sous-domaine selon vos besoins.
-      - "traefik.http.routers.api-dev.entrypoints=web"
+      - "traefik.http.routers.api-dev.entrypoints=websecure"
+      - "traefik.http.routers.api-dev.tls.certresolver=myresolver"
       - "traefik.http.services.api-dev.loadbalancer.server.port=4000"
     environment:
       - HOSTNAME=${HOSTNAME}
@@ -197,10 +231,10 @@ services:
     # command: sh -c 'while ! nc -z db 3306; do sleep 1; done; npm run dev'
 
   api-preprod:
-    container_name: TheTiptop_Api-preprod
+    container_name: api-preprod # The Tiptop api preprod
     build:
       context: ${WORKSPACE_PATH}/the-tiptop-api-preprod
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.preprod
     ports:
       - 4101:${PORT}
     labels:
@@ -209,6 +243,27 @@ services:
       - "traefik.http.routers.api-preprod.entrypoints=websecure"
       - "traefik.http.routers.api-preprod.tls.certresolver=myresolver"
       - "traefik.http.services.api-preprod.loadbalancer.server.port=4000"
+    environment:
+      - HOSTNAME=${HOSTNAME}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+    networks:
+      - my-network
+    depends_on:
+      - db
+
+  api-prod:
+    container_name: api-prod # The Tiptop api preprod
+    build:
+      context: ${WORKSPACE_PATH}/the-tiptop-api
+      dockerfile: Dockerfile.prod
+    ports:
+      - 4102:${PORT}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api-prod.rule=Host(`domaine.name.com`)" # Vous pouvez ajuster le sous-domaine selon vos besoins.
+      - "traefik.http.routers.api-prod.entrypoints=websecure"
+      - "traefik.http.routers.api-prod.tls.certresolver=myresolver"
+      - "traefik.http.services.api-prod.loadbalancer.server.port=4000"
     environment:
       - HOSTNAME=${HOSTNAME}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
@@ -242,8 +297,7 @@ services:
     networks:
       - my-network
     environment:
-      - DB_DUMP_FREQ=1440 # Fréquence en minutes soit 1 jour
-      - DB_DUMP_BEGIN=+0 # Commence immédiatement
+      - DB_DUMP_CRON=0 21 * * * # Effectue un dump de la DB tous les jours à 21h
       - DB_SERVER=db # Permet de dire à quel serveur de BDD il doit se connecter
       - DB_USER=root
       - DB_PASS=${MYSQL_ROOT_PASSWORD}
@@ -254,24 +308,6 @@ services:
     depends_on:
       - db
 
-  dbtests:
-    container_name: TheTiptop_DbTest
-    image: mysql:latest
-    env_file:
-      - .env
-    ports:
-      - 3308:3306
-    networks:
-      - my-network
-    restart: always
-    environment:
-      - MYSQL_DATABASE=${MYSQL_TEST_DATABASE}
-      - MYSQL_USER=${MYSQL_TEST_USER}
-      - MYSQL_PASSWORD=${MYSQL_TEST_PASSWORD}
-      - MYSQL_ROOT_PASSWORD=${MYSQL_TEST_ROOT_PASSWORD}
-    volumes:
-      - ./mysql-data-test:/var/lib/mysql
-
   # Ajout de phpmyadmin et liaison avec le service DB pour avoir une interface web
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
@@ -280,7 +316,7 @@ services:
       - PMA_PORT=3306
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.phpmyadmin.rule=Host(`domaine.name.com`)" # Vous pouvez ajuster le sous-domaine selon vos besoins.
+      - "traefik.http.routers.phpmyadmin.rule=Host(`domaine.name.com`)"
       - "traefik.http.routers.phpmyadmin.entrypoints=websecure"
       - "traefik.http.routers.phpmyadmin.tls.certresolver=myresolver"
       - "traefik.http.services.phpmyadmin.loadbalancer.server.port=80"
@@ -296,14 +332,22 @@ services:
     image: sonarqube:latest
     networks:
       - my-network
+    ports:
+      - "9000:9000"
     environment:
       - SONARQUBE_JDBC_URL=jdbc:postgresql://db:5432/sonar
       - SONARQUBE_JDBC_USERNAME=sonar
       - SONARQUBE_JDBC_PASSWORD=sonar
+    volumes:
+      - sonarqubedata:/opt/sonarqube/data
+      - sonarqubeextensions:/opt/sonarqube/extensions
+      - sonarqubelogs:/opt/sonarqube/logs
+      - sonarqubetemp:/opt/sonarqube/temp
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.sonarqube.rule=Host(`domaine.name.com`)" # Vous pouvez ajuster le sous-domaine selon vos besoins.
-      - "traefik.http.routers.sonarqube.entrypoints=web"
+      - "traefik.http.routers.sonarqube.rule=Host(`domaine.name.com`)"
+      - "traefik.http.routers.sonarqube.entrypoints=websecure"
+      - "traefik.http.routers.sonarqube.tls.certresolver=myresolver"
       - "traefik.http.services.sonarqube.loadbalancer.server.port=9000"
 
   sonar-db:
@@ -321,6 +365,14 @@ services:
 
 volumes:
   postgresqldata:
+  sonarqubedata:
+  sonarqubeextensions:
+  sonarqubelogs:
+  sonarqubetemp:
+  grafanadata:
+  grafanalogs:
+  grafanaplugins:
+  
 
 networks:
   my-network:
