@@ -30,7 +30,7 @@ services:
       - "traefik.http.routers.traefik.tls.certresolver=myresolver"
       - "traefik.http.routers.traefik.service=api@internal"
       - "traefik.http.routers.traefik.middlewares=auth,traefik-sec-headers@docker,security@docker,myreferrerpolicy@docker,mypermissionspolicy@docker" # Ajout d'un middleware pour activer l'authentification + entête sécurité
-      - "traefik.http.middlewares.auth.basicauth.users=fducks196:$$apr1$$gwHGhwYm$$FDd5rOVKGugz8S7a3Mn9o0" # Ajout de l'authenfication via ID et MDP hashé les $ car docker interprète différement les $
+      - "traefik.http.middlewares.auth.basicauth.users=[USERNAME]:[PASSWORD]" # Ajout de l'authenfication via ID et MDP hashé les $ sont doublés car docker interprète différement les $
       #Ajout entêtes de sécurité HSTS
       - "traefik.http.middlewares.security.headers.stsSeconds=31536000" # 1 an
       - "traefik.http.middlewares.security.headers.stsIncludeSubdomains=true"
@@ -95,6 +95,24 @@ services:
       - "traefik.http.services.grafana.loadbalancer.server.port=3000" 
       - "traefik.http.routers.grafana.tls.certresolver=myresolver"
       - "traefik.http.routers.grafana.middlewares=security@docker,myreferrerpolicy@docker,mypermissionspolicy@docker" # Ajout middleware entête de securité
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    restart: always
+    ports:
+      - "9200:9000" # Portainer sera accessible sur le port 9200 de l'hôte
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Montage du socket Docker
+      - portainer_data:/data # Stockage des données de Portainer
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`domaine.name.com`)" # Vous pouvez ajuster le sous-domaine selon vos besoins.
+      - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.tls.certresolver=myresolver"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+      - "traefik.http.routers.portainer.middlewares=traefik-sec-headers@docker,security@docker,myreferrerpolicy@docker,mypermissionspolicy@docker"
+    networks:
+      - my-network
 
   gitlab:
     image: gitlab/gitlab-ce:latest
@@ -372,6 +390,7 @@ volumes:
   grafanadata:
   grafanalogs:
   grafanaplugins:
+  portainer_data:
   
 
 networks:
