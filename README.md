@@ -30,4 +30,6 @@ Backup quotidien effectué
 
     Diagramme d'infrastructure du workflow CI/CD
 
+![alt text](https://github.com/aruseus98/workflow-cicd/tree/main/diagramme_infrastructure_workflow.jpg?raw=true)
+
 
